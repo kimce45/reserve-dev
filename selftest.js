@@ -650,8 +650,8 @@
     var C = T.twistChance, D = T.computeDev;
     tru('판정 함수를 내보낸다', typeof C === 'function' && typeof D === 'function');
     if (typeof C !== 'function' || typeof D !== 'function') return;
-    check('실사용 주소 → 0.25', C(D('kimce45.github.io', '/reserve/')), 0.25);
-    check('실사용 주소(끝 / 없음) → 0.25', C(D('kimce45.github.io', '/reserve')), 0.25);
+    check('실사용 주소 → 1/3', C(D('kimce45.github.io', '/reserve/')), 1/3);
+    check('실사용 주소(끝 / 없음) → 1/3', C(D('kimce45.github.io', '/reserve')), 1/3);
     check('테스트앱 주소 → 1', C(D('kimce45.github.io', '/reserve-dev/')), 1);
     check('로컬 → 1', C(D('localhost', '/app/index.html')), 1);
     check('파일로 연 것 → 1', C(D('', '/Users/x/index.html')), 1);
@@ -713,12 +713,22 @@
   })();
 
   // 로그아웃 제거(오너 2026-10-15) — 가게 공용 폰이라 쓸 일이 없고, 끊긴 채 누르면 스스로를 가둔다.
-  group('서랍 — 로그아웃 없음');
+  // 서랍은 «카테고리»로 묶는다 — 명단 / 매장 도구 / 앱 안내 / 위험.
+  // 쓰는 빈도가 아니라 «무엇에 대한 것인가»가 기준이다.
+  group('서랍 — 묶음과 순서');
   (function(){
-    tru('서랍에 로그아웃 버튼이 없다', !document.getElementById('logoutBtn'));
     var labels = [].map.call(document.querySelectorAll('.dwitem'), function(b){ return b.textContent.trim(); });
-    tru('남은 항목에 「로그아웃」이 없다', labels.indexOf('로그아웃') < 0, labels.join(' · '));
+    check('항목 순서', labels.join(' · '),
+      '이름 검색 · 기록 · Wi-Fi 안내 · 룰렛 · 익순이란? · 자주 묻는 질문 · 앱으로 설치하기 · 문의하기 · 명단 초기화');
+    check('구분선 넷 — 머리 밑 1 + 묶음 사이 3', document.querySelectorAll('.drawer .dwsep:not(.push)').length, 4);
+    tru('로그아웃 버튼이 없다', !document.getElementById('logoutBtn'));
+    tru('「만든 곳」 메뉴는 없다 — 문의하기가 품는다', !document.getElementById('makerBtn'));
     tru('명단 초기화는 그대로 있다', !!document.getElementById('resetBtn'));
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    var at = src.indexOf("document.getElementById('askBtn')");
+    var body = at < 0 ? '' : src.slice(at, at + 1200);
+    tru('문의하기 안에 메일과 만든 곳이 같이 있다', /메일/.test(body) && /만든 곳/.test(body) && /SITE/.test(body));
+    tru('만든 곳 링크는 주소 전체를 보여준다', /SITE \+ '<\/span>/.test(body));
   })();
 
   // 문의하기(오너 2026-10-15) — 가게 공용 폰은 메일 앱이 없을 수 있어 «주소를 보여주고 복사»까지 된다.
