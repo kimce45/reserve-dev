@@ -1857,16 +1857,18 @@ window.addEventListener('pageshow', remeasureSbcut);
   <button type="button" class="dwitem" id="searchItem">이름 검색</button>
   <button type="button" class="dwitem" id="recBtn">기록</button>
   <div class="dwsep"></div>
-  <!-- 「명단 말고 그 밖의 것들」 한 묶음. 룰렛과 만든 곳을 각각 선으로 떼어 놨더니 혼자 있는 묶음이 둘이 생겼고,
-       11개 항목에 선이 5개가 되어 메뉴가 어지러웠다(「엉망진창」). 혼자면 묶음이 아니다.
-       자리는 자주 쓰는 순 — 룰렛·Wi-Fi 가 가게에서 실제로 쓰는 것, 뒤 셋은 거의 안 연다. -->
-  <button type="button" class="dwitem" id="rltBtn">룰렛</button>
+  <!-- ★묶음 기준은 «무엇에 대한 것인가»다 — 쓰는 빈도가 아니다.
+       명단 / 매장 도구 / 앱 안내 / 위험, 네 덩이.
+       혼자 있는 항목은 묶음으로 떼지 않는다 — 선만 늘고 메뉴가 어지러워진다. -->
+  <!-- 매장 도구 — 명단 일은 아니지만 가게에서 쓰는 것들 (손님 응대 · 청소 당번) -->
   <button type="button" class="dwitem" id="wifiBtn">Wi-Fi 안내</button>
+  <button type="button" class="dwitem" id="rltBtn">룰렛</button>
+  <div class="dwsep"></div>
+  <!-- 앱 안내 — 읽을 것 → 할 것 → 물을 것 순서 -->
   <button type="button" class="dwitem" id="aboutBtn">익순이란?</button>
   <button type="button" class="dwitem" id="faqBtn">자주 묻는 질문</button>
-  <button type="button" class="dwitem" id="askBtn">문의하기</button>
   <button type="button" class="dwitem" id="installBtn">앱으로 설치하기</button>
-  <button type="button" class="dwitem" id="makerBtn">만든 곳</button>
+  <button type="button" class="dwitem" id="askBtn">문의하기</button>
   <div class="dwsep"></div>
   <button type="button" class="dwitem danger" id="resetBtn">명단 초기화</button>
   <div class="dwsep push"></div>
@@ -4819,7 +4821,9 @@ window.dispatchEvent(new Event('fb-ready'));
 
   // 날벼락이 넘어갈 사람. «자기 자신만 빼고» 균등하게 — n-1 중 하나를 뽑고 자기 번호 이상이면 한 칸 민다.
   // 이 균등성이 공정성의 전부다: P(최종 x) = .8·(1/n) + .2·[(n-1)/n · 1/(n-1)] = 1/n.
-  function twistChance(dev){ return dev ? 1.00 : 0.25; }
+  // 실사용 1/3 · 테스트 1.00. ★값을 손으로 바꿔 올리지 말 것 — 주소로 갈리므로 같은 파일이 어디서든 맞다.
+  //   1/3 은 「세 번에 한 번」이라는 뜻 그대로 적는다. 0.333… 로 적으면 끝자리를 몇 개 쓸지가 매번 흔들린다.
+  function twistChance(dev){ return dev ? 1.00 : 1/3; }
   function twistPick(n, old, rnd){
     var k = Math.floor((rnd === undefined ? Math.random() : rnd) * (n - 1));
     if (k >= n - 1) k = n - 2;          // rnd 가 1 이어도 범위를 안 넘게
@@ -5677,7 +5681,7 @@ window.dispatchEvent(new Event('fb-ready'));
   // ★주소를 «보여주고 복사»까지 하는 이유: 가게 공용 폰은 메일 앱이 설정 안 돼 있는 경우가 흔하다.
   //   그런 폰에서 mailto: 를 누르면 아무 일도 안 일어난다 — 그때도 주소를 옮겨 적을 수 있어야 한다.
   var ASK = 'pikaju0007@gmail.com';
-  var VERSION = 'v2.2.0';
+  var VERSION = 'v2.2.1';
   document.getElementById('askBtn').addEventListener('click', function(){
     hideDrawer();
     // 제목에 버전을 미리 넣는다 — 「어느 판에서 난 일인가」를 매번 되묻지 않아도 된다.
@@ -5685,43 +5689,45 @@ window.dispatchEvent(new Event('fb-ready'));
     // ★설명은 안 붙인다 — 주소 한 줄이면 할 말이 끝난다(「메일만 띡」).
     openSheet('문의하기',
       '<div class="wnet cpy"><span class="k">메일</span>'
-      +   '<a class="v url site" href="' + mailto + '"><span class="addr">' + ASK + '</span></a>'
-      +   '<button type="button" class="urlcopy" aria-label="메일 주소 복사">' + ICON_COPY + '</button></div>');
+      +   '<a class="v url mailto" href="' + mailto + '"><span class="addr">' + ASK + '</span></a>'
+      +   '<button type="button" class="urlcopy" aria-label="메일 주소 복사">' + ICON_COPY + '</button></div>'
+      // 「만든 곳」은 따로 메뉴를 두지 않는다 — 메일과 홈페이지는 둘 다 «만든 사람에게 가는 길»이라
+      // 한 자리에 둔다. 라벨은 「홈페이지」가 아니라 「만든 곳」이다: 누구의 홈페이지인지가 드러난다.
+      + '<div class="wnet"><span class="k">만든 곳</span>'
+      +   '<a class="v url site" href="' + SITE + '" target="_blank" rel="noopener noreferrer"><span class="addr">'
+      +     SITE + '</span><span class="bkchev">' + OUT_SVG + '</span></a></div>');
     var cp = document.querySelector('#sheetBody .urlcopy');
     if (cp) cp.onclick = function(){ copyText(ASK, '메일 주소 복사됨'); };
+    bindSafariLink();
   });
 
-  // 만든 곳 — 홈페이지 한 줄. 여기 한 군데서만 고친다.
+  // 만든 곳 주소 — 여기 한 군데서만 고친다. 「문의하기」 시트가 메일과 함께 보여준다.
   var SITE = 'https://juminlabs.pikaju.workers.dev';
-  // 누르면 바로 연다 — 시트 한 겹을 더 두고 「열기」를 또 누르게 할 이유가 없다.
+  // 시트를 그린 «직후»에 부른다. 누르면 바로 연다 — 시트 한 겹을 더 두고 「열기」를 또 누르게 할 이유가 없다.
   // ★_blank 가 필수. 홈 화면 앱에서 같은 창에 열면 «앱 창 자체»가 홈페이지로 바뀐다.
-  document.getElementById('makerBtn').addEventListener('click', function(){
-    hideDrawer();
-    openSheet('만든 곳',
-      '<div class="wnet"><span class="k">홈페이지</span>'
-      +   '<a class="v url site" href="' + SITE + '" target="_blank" rel="noopener noreferrer"><span class="addr">'   // .url = 13px. 주소는 «읽어서 외우는 값»이 아니라 «눌러서 가는 곳»이라 설치 안내와 같은 크기로 둔다 — 17 로 뒀더니 카드를 오른쪽 끝까지 꽉 채워 이 시트에서 제일 무거운 글자가 됐다. 줄 높이는 .wnet 의 min-height 가 지킨다
-      +     SITE + '</span><span class="bkchev">' + OUT_SVG + '</span></a></div>');   // 설치 안내의 링크 줄과 같게 — https:// 까지 보여준다
+  /* 아이폰 홈 화면 앱에서만 진짜 사파리로 넘긴다. 그 밖(사파리 탭·안드로이드)은 링크 원래 동작 그대로.
+     그냥 두면 iOS 가 앱 위에 덮이는 인앱 브라우저로 연다 — 앱은 뒤에 남지만 사파리가 아니다.
+     ★x-safari-https:// 는 애플이 문서로 밝힌 주소가 아니라 언젠가 안 먹을 수 있다. 그날엔 iOS 가
+       「주소가 유효하지 않다」를 띄운다 — 그러면 이 분기를 빼고 링크 원래 동작(인앱 브라우저)으로 돌릴 것.
+     navigator.standalone 은 iOS 사파리에만 있는 값이라 «아이폰 홈 화면 앱»만 정확히 고른다
+     (display-mode:standalone 은 안드로이드도 참이라 쓰면 안 된다 — 거기선 x-safari 가 없는 주소다).
+     ★예비 장치(«안 넘어가면 앱 안에서라도 연다»)는 «없는 게 맞다». 시뮬레이터 홈 화면 앱 실측:
+       · 사파리로 넘어가는 데 0.9~1.0초 걸린다(blur·hidden 이 그때 온다).
+       · 0.7초 예비 → 넘어가기 «전에» 울려 앱 안에서도 열었다 =본 「복귀해도 앱에도 열려 있다」.
+       · 2.5초 예비 → 겹치진 않지만 iOS 가 window.open 을 팝업으로 막는다(null) — 누른 지 오래돼서.
+         (0.7초 뒤 window.open 은 열린다. 누른 순간에서 멀어지면 막힌다.)
+       → «넘어간 뒤»와 «아직 열 수 있는 때»가 겹치지 않는다. 어떤 시간으로도 맞게 못 만든다.
+       x-safari 가 안 먹는 폰이면 iOS 가 스스로 「주소가 유효하지 않다」를 띄운다 — 예비가 있어도 거기선 막혔다.
+     다시 넣지 말 것. 셀프테스트가 이 자리에 window.open 이 돌아오면 잡는다. */
+  function bindSafariLink(){
     var lk = document.querySelector('#sheetBody .site');
-    /* 아이폰 홈 화면 앱에서만 진짜 사파리로 넘긴다. 그 밖(사파리 탭·안드로이드)은 링크 원래 동작 그대로.
-       그냥 두면 iOS 가 앱 위에 덮이는 인앱 브라우저로 연다 — 앱은 뒤에 남지만 사파리가 아니다.
-       ★x-safari-https:// 는 애플이 문서로 밝힌 주소가 아니라 언젠가 안 먹을 수 있다. 그날엔 iOS 가
-         「주소가 유효하지 않다」를 띄운다 — 그러면 이 분기를 빼고 링크 원래 동작(인앱 브라우저)으로 돌릴 것.
-       navigator.standalone 은 iOS 사파리에만 있는 값이라 «아이폰 홈 화면 앱»만 정확히 고른다
-       (display-mode:standalone 은 안드로이드도 참이라 쓰면 안 된다 — 거기선 x-safari 가 없는 주소다).
-       ★예비 장치(«안 넘어가면 앱 안에서라도 연다»)는 «없는 게 맞다». 시뮬레이터 홈 화면 앱 실측:
-         · 사파리로 넘어가는 데 0.9~1.0초 걸린다(blur·hidden 이 그때 온다).
-         · 0.7초 예비 → 넘어가기 «전에» 울려 앱 안에서도 열었다 =본 「복귀해도 앱에도 열려 있다」.
-         · 2.5초 예비 → 겹치진 않지만 iOS 가 window.open 을 팝업으로 막는다(null) — 누른 지 오래돼서.
-           (0.7초 뒤 window.open 은 열린다. 누른 순간에서 멀어지면 막힌다.)
-         → «넘어간 뒤»와 «아직 열 수 있는 때»가 겹치지 않는다. 어떤 시간으로도 맞게 못 만든다.
-         x-safari 가 안 먹는 폰이면 iOS 가 스스로 「주소가 유효하지 않다」를 띄운다 — 예비가 있어도 거기선 막혔다.
-       다시 넣지 말 것. 셀프테스트가 이 자리에 window.open 이 돌아오면 잡는다. */
-    if (lk) lk.addEventListener('click', function(e){
+    if (!lk) return;
+    lk.addEventListener('click', function(e){
       if (window.navigator.standalone !== true) return;
       e.preventDefault();
       location.href = 'x-safari-' + SITE;
     });
-  });
+  }
   document.getElementById('installBtn').addEventListener('click', function(){
     hideDrawer();
     openInstallSheet();
