@@ -1191,7 +1191,10 @@ window.addEventListener('pageshow', remeasureSbcut);
        다만 여기 화살표는 «비스듬히 밖으로» 나간다 — 앱 안으로 들어가는 › 와 구분해야 한다.
      ★target=_blank 가 필수다. 홈 화면 앱에서 같은 창에 열면 «앱 창 자체»가 홈페이지로 바뀌어
        돌아오려면 뒤로 가기를 찾아야 한다. _blank 면 사파리로 넘어가고 앱은 뒤에 그대로 남는다. */
-  .site{
+  /* .site = 밖으로 나가는 링크(만든 곳) · .mailto = 메일 열기. 생김새는 같고 «이름만» 다르다 —
+     사파리로 넘기는 코드가 .site 하나만 집어야 해서 갈라 놨다. 스타일을 한쪽에만 주면
+     메일 줄에 브라우저 기본 밑줄이 그대로 나온다(실제로 그렇게 나갔다). */
+  .site, .mailto{
     /* 줄 «높이»를 따라 늘어난다(align-self:stretch). 고정 여백으로 맞춰 두면 .wnet 의 높이가 바뀔 때
        누르는 영역만 뒤처진다 — 실제로 줄이 45.8→54 가 됐을 때 링크만 45.8 로 남았다. */
     display:flex;align-items:center;align-self:stretch;flex:1;min-width:0;gap:10px;
