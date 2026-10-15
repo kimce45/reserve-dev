@@ -729,6 +729,16 @@
     var body = at < 0 ? '' : src.slice(at, at + 1200);
     tru('문의하기 안에 메일과 만든 곳이 같이 있다', /메일/.test(body) && /만든 곳/.test(body) && /SITE/.test(body));
     tru('만든 곳 링크는 주소 전체를 보여준다', /SITE \+ '<\/span>/.test(body));
+    // ★메일 줄에 브라우저 기본 밑줄이 나온 적이 있다 — .site 에만 스타일을 줬기 때문.
+    //   두 링크는 생김새가 같아야 한다(이름만 갈라져 있다).
+    (function(){
+      var css = [].slice.call(document.styleSheets).map(function(sh){
+        var r; try { r = sh.cssRules; } catch(e){ return ''; }
+        return [].slice.call(r).map(function(x){ return x.cssText || ''; }).join('\n');
+      }).join('\n');
+      var m = /(^|\n)[^\n{]*\.mailto[^\n{]*\{[^}]*text-decoration:\s*none/.test(css);
+      tru('메일 줄도 밑줄 없음 규칙을 받는다', m);
+    })();
   })();
 
   // 문의하기(오너 2026-10-15) — 가게 공용 폰은 메일 앱이 없을 수 있어 «주소를 보여주고 복사»까지 된다.
