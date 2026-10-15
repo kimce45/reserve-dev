@@ -650,8 +650,8 @@
     var C = T.twistChance, D = T.computeDev;
     tru('판정 함수를 내보낸다', typeof C === 'function' && typeof D === 'function');
     if (typeof C !== 'function' || typeof D !== 'function') return;
-    check('실사용 주소 → 1/3', C(D('kimce45.github.io', '/reserve/')), 1/3);
-    check('실사용 주소(끝 / 없음) → 1/3', C(D('kimce45.github.io', '/reserve')), 1/3);
+    check('실사용 주소 → 0.25', C(D('kimce45.github.io', '/reserve/')), 0.25);
+    check('실사용 주소(끝 / 없음) → 0.25', C(D('kimce45.github.io', '/reserve')), 0.25);
     check('테스트앱 주소 → 1', C(D('kimce45.github.io', '/reserve-dev/')), 1);
     check('로컬 → 1', C(D('localhost', '/app/index.html')), 1);
     check('파일로 연 것 → 1', C(D('', '/Users/x/index.html')), 1);
