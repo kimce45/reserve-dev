@@ -1,0 +1,846 @@
+/* 익순이 셀프테스트 — index.html?selftest 로 실행된다.
+   index.html 안 IIFE 가 window.__ixTest 로 실제 배포되는 순수 함수들을 노출하고,
+   여기서 알려진 입력/출력으로 단언 검사를 돌려 화면에 결과를 뿌린다.
+   (복붙한 사본이 아니라 배포되는 그 함수를 그대로 검사한다.) */
+(function(){
+  'use strict';
+  var T = window.__ixTest;
+  var results = [];
+  var groups = [];
+  var curGroup = null;
+
+  function group(name){ curGroup = { name: name, rows: [] }; groups.push(curGroup); }
+  function J(v){ try { return JSON.stringify(v); } catch(e){ return String(v); } }
+
+  // 깊은 동등 비교 (undefined 필드도 구분)
+  // ★이건 «비교»만 한다 — 테스트를 남기는 건 check(name, got, want) 다.
+  //   eq('이름', 값, 기대) 로 쓰면 문자열과 값을 비교해 false 를 돌려주고 끝나 «아무것도 검사 안 한 채»
+  //   조용히 지나간다. 2026-09-21 에 9곳이 그렇게 몇 시간 동안 빈 테스트였다(추가한 7개 중 1개만 셈에 잡혀 드러남).
+  //   그래서 그렇게 불리면 실패로 크게 남긴다.
+  function eq(a, b){
+    if (arguments.length === 3 && typeof a === 'string'){
+      (curGroup ? curGroup.rows : results).push({ name: '★eq 를 테스트처럼 씀 — check 로 바꿀 것: ' + a,
+        ok: false, got: 'eq(이름, 값, 기대)', want: 'check(이름, 값, 기대)' });
+      return false;
+    }
+    if (a === b) return true;
+    if (a && b && typeof a === 'object' && typeof b === 'object'){
+      var ka = Object.keys(a), kb = Object.keys(b);
+      if (ka.length !== kb.length) return false;
+      for (var i = 0; i < ka.length; i++){
+        if (!Object.prototype.hasOwnProperty.call(b, ka[i])) return false;
+        if (!eq(a[ka[i]], b[ka[i]])) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function check(name, got, want){
+    var ok = eq(got, want);
+    var row = { name: name, ok: ok, got: got, want: want };
+    (curGroup ? curGroup.rows : results).push(row);
+    if (!curGroup) results.push(row);
+  }
+  function tru(name, cond, detail){
+    (curGroup ? curGroup.rows : results).push({ name: name, ok: !!cond, got: detail === undefined ? cond : detail, want: true });
+  }
+
+  /* ==================== parse (양식 파싱) ==================== */
+  group('parse — 양식 파싱');
+  (function(){
+    var r = T.parse('14:00 임동현 2명');
+    check('기본 한 줄', r.length && { t: r[0].time, n: r[0].name, p: r[0].pax, s: r[0].status },
+          { t: '14:00', n: '임동현', p: 2, s: 'pending' });
+
+    check('방문 꼬리', T.parse('15:00 김동현 4명 방문')[0].status, 'arrived');
+    check('취소 꼬리', T.parse('17:00 이동현 3명 취소')[0].status, 'cancelled');
+
+    var m = T.parse('19:00 박동현 2명 (창가석)')[0];
+    check('(메모)', { name: m.name, memo: m.memo }, { name: '박동현', memo: '창가석' });
+
+    check('시 표기', T.parse('14시30분 홍길동 2명')[0].time, '14:30');
+    check('. 표기', T.parse('14.30 홍길동 2명')[0].time, '14:30');
+    check('분 없는 정각', T.parse('14시 홍길동 2명')[0].time, '14:00');
+
+    check('빈 줄·공백은 무시', T.parse('\n  \n14:00 홍길동 2명\n\n').length, 1);
+    check('여러 줄', T.parse('12:00 A 2명\n13:00 B 3명').length, 2);
+
+    // ★2026-09-28 규칙 바뀜: 단톡방 글을 통째로 붙여넣을 수 있게, «시각도 인원도 없는 줄»은 조용히 버린다.
+    //   예약을 놓치는 건 위험하므로 «시각이나 인원이 하나라도 있는데» 못 읽으면 예전처럼 알린다.
+    var bad = T.parse('이건 양식이 아님\n14:00 홍길동 2명\n15:00 없음');
+    check('머리글 같은 줄은 조용히 버린다', bad.bad.map(function(b){ return b.no; }), [3]);
+    check('못 읽은 줄은 out 에서 제외', bad.length, 1);
+    check('인원만 있고 시각이 없으면 알린다', T.parse('홍길동 2명').bad.length, 1);
+    check('시각만 있고 인원이 없으면 알린다', T.parse('15:00 홍길동').bad.length, 1);
+
+    check('알 수 없는 꼬리는 오류', T.parse('14:00 홍길동 2명 뭐임').bad.length, 1);
+    check('24시 이상은 오류', T.parse('25:00 홍길동 2명').bad.length, 1);
+    check('60분 이상은 오류', T.parse('14:70 홍길동 2명').bad.length, 1);
+    check('0명은 오류', T.parse('14:00 홍길동 0명').bad.length, 1);
+
+    var dup = T.parse('14:00 홍길동 2명\n14:00 홍길동 2명');
+    tru('같은 시각·이름·인원도 서로 다른 id', dup.length === 2 && dup[0].id !== dup[1].id,
+        dup.length === 2 ? [dup[0].id, dup[1].id] : dup.length);
+
+    check('이름 안의 공백은 하나로', T.parse('14:00 Donghyun   Lee 3명')[0].name, 'Donghyun Lee');
+    check('seq 는 입력 순서', T.parse('12:00 A 2명\n13:00 B 3명').map(function(x){ return x.seq; }), [0, 1]);
+  })();
+
+  /* ==================== normTime ==================== */
+  group('normTime — 시간 입력 정규화');
+  check('"1530" → 15:30', T.normTime('1530'), '15:30');
+  check('"15:30"', T.normTime('15:30'), '15:30');
+  check('"15시30분"', T.normTime('15시30분'), '15:30');
+  check('"15.30"', T.normTime('15.30'), '15:30');
+  check('"9:5" → 09:05', T.normTime('9:5'), '09:05');
+  check('"14" → 14:00', T.normTime('14'), '14:00');
+  check('공백 허용', T.normTime(' 15 : 30 '), '15:30');
+  check('범위 밖은 null', T.normTime('25:00'), null);
+  check('쓰레기는 null', T.normTime('abc'), null);
+
+  /* ==================== 날짜 계산 ==================== */
+  group('날짜 — pad / ymd / shiftDate / dayGap');
+  check('pad 한 자리', T.pad(3), '03');
+  check('pad 두 자리', T.pad(12), 12 + '');
+  check('ymd', T.ymd(new Date(2026, 7, 5)), '2026-08-05');
+  check('shiftDate +1 (월말 넘김)', T.shiftDate('2026-08-31', 1), '2026-09-01');
+  check('shiftDate -1', T.shiftDate('2026-09-01', -1), '2026-08-31');
+  check('shiftDate 연말 넘김', T.shiftDate('2026-12-31', 1), '2027-01-01');
+  (function(){
+    var today = T.bizDate();
+    check('dayGap(오늘) === 0', T.dayGap(today), 0);
+    check('dayGap(내일) === 1', T.dayGap(T.shiftDate(today, 1)), 1);
+    check('dayGap(어제) === -1', T.dayGap(T.shiftDate(today, -1)), -1);
+  })();
+
+  /* ==================== 시간대 판정 ==================== */
+  group('시간대 — slotMin / slotLive');
+  check('slotMin "14:30"', T.slotMin('14:30'), 14 * 60 + 30);
+  (function(){
+    var on = T.consts.GRACE_ON_HOUR, off = T.consts.GRACE_OFF_HOUR;
+    tru('정각: 유예(11분) 전이면 live', T.slotLive('14:00', 14 * 60 + on - 0.5) === true);
+    tru('정각: 유예 지나면 아님', T.slotLive('14:00', 14 * 60 + on + 0.5) === false);
+    tru('비정각: 예약 시각 전이면 live', T.slotLive('14:30', 14 * 60 + 30 - 0.01) === true);
+    tru('비정각: 예약 시각 + 5초 지나면 아님', T.slotLive('14:30', 14 * 60 + 30 + off + 0.01) === false);
+  })();
+
+  /* ==================== 집계 ==================== */
+  group('tallyStatus — 방문/취소/대기 집계');
+  (function(){
+    var items = [
+      { status: 'arrived' }, { status: 'arrived' },
+      { status: 'cancelled' },
+      { status: 'pending' }, { status: 'pending' }, { status: 'pending' }
+    ];
+    check('집계', T.tallyStatus(items), { came: 2, off: 1, pend: 3, total: 6 });
+    check('빈 배열', T.tallyStatus([]), { came: 0, off: 0, pend: 0, total: 0 });
+  })();
+
+  /* ==================== groupByTime / liveNowTime ==================== */
+  group('groupByTime / liveNowTime');
+  (function(){
+    var items = [
+      { time: '12:00', status: 'pending', seq: 0 },
+      { time: '12:00', status: 'arrived', seq: 1 },
+      { time: '13:00', status: 'pending', seq: 2 }
+    ];
+    var g = T.groupByTime(items);
+    check('시간대 2개로', g.map(function(x){ return x.time; }), ['12:00', '13:00']);
+    check('12:00 에 2건', g[0].items.length, 2);
+
+    // liveNowTime 은 "오늘"일 때만 동작 → viewDate 를 오늘로 세팅
+    var today = T.bizDate();
+    T.setViewDate(today);
+    // 대기가 남은 시간대는, 아직 안 지났으면(slotLive) "지금" 으로 잡힌다.
+    // 하드코딩한 미래 시각은 자정 근처에 실행하면 과거가 되므로, 지금 시각 기준
+    // slotLive 와 일치하는지로 검사한다 (둘의 배선을 확인하는 게 목적).
+    var fs = '23:59';
+    var expect = T.slotLive(fs, T.nowMin()) ? fs : null;
+    check('대기 + 아직 안 지남 → 그 시간대', T.liveNowTime(T.groupByTime(
+      [{ time: fs, status: 'pending', seq: 0 }])), expect);
+    var futureDone = [{ time: fs, status: 'arrived', seq: 0 }];
+    check('대기 없으면 null', T.liveNowTime(T.groupByTime(futureDone)), null);
+  })();
+
+  /* ==================== isCollapsed (접힘 상태머신) ==================== */
+  group('isCollapsed — 시간대 접힘 규칙');
+  (function(){
+    T.setState({ date: T.bizDate(), items: [] });
+    T.setCollapsed({});
+    T.setTouched({});
+    check('대기 있으면 안 접힘', T.isCollapsed('14:00', 2), false);
+    // 대기 0 + 방금 바뀐 흔적 없음 → COLLAPSE_DELAY 지난 것으로 봄 → 접힘
+    check('대기 0 + 오래됨 → 접힘', T.isCollapsed('14:00', 0), true);
+    // 방금 만진 것으로 표시하면 유예 중 → 안 접힘
+    T.setTouched({ '15:00': Date.now() });
+    check('대기 0 + 방금 체크 → 유예(안 접힘)', T.isCollapsed('15:00', 0), false);
+    // 손으로 접어둔 상태(대기 없음)면 그대로 접힘 유지
+    T.setTouched({});
+    T.setCollapsed({ '16:00': { v: true, done: true } });
+    check('수동 접기 유지', T.isCollapsed('16:00', 0), true);
+    T.setCollapsed({ '16:00': { v: false, done: true } });
+    check('수동 펼침 유지', T.isCollapsed('16:00', 0), false);
+    // 수동 상태였는데 대기 여부가 바뀌면 규칙으로 복귀
+    T.setCollapsed({ '17:00': { v: true, done: true } });
+    check('대기 생기면 수동 무시 → 펼침', T.isCollapsed('17:00', 1), false);
+    T.setState({ date: T.bizDate(), items: [] });
+    T.setCollapsed({});
+    T.setTouched({});
+  })();
+
+  /* ==================== reportText / uniqueId / nextSeq ==================== */
+  group('reportText / uniqueId / nextSeq (state 의존)');
+  (function(){
+    T.setState({ date: '2026-08-31', items: [
+      { id: 'a', time: '12:00', name: '김동현', pax: 2, status: 'pending', seq: 0 },
+      { id: 'b', time: '12:00', name: '박동현', pax: 3, status: 'arrived', seq: 1 },
+      { id: 'c', time: '13:00', name: '이동현', pax: 4, status: 'cancelled', seq: 2 }
+    ]});
+    check('reportText 양식', T.reportText(),
+      '12:00 김동현 2명\n12:00 박동현 3명 방문\n\n13:00 이동현 4명 취소');
+    check('nextSeq', T.nextSeq(), 3);
+    check('uniqueId 는 base|n 꼴', T.uniqueId('12:00', '김동현', 2).indexOf('12:00|김동현|2|'), 0);
+    T.setState(null);
+  })();
+
+  /* ==================== 로그 유틸 ==================== */
+  group('log — validLogDate / cleanLogEntry / mergeLogRows');
+  check('유효 날짜', T.validLogDate('2026-08-31'), true);
+  check('없는 날짜(2월 30일)', T.validLogDate('2026-02-30'), false);
+  check('형식 틀림', T.validLogDate('2026-8-1'), false);
+  (function(){
+    var good = T.cleanLogEntry({ id: 'ev1234567890ab', at: 1000, t: '12:00', k: '방문', s: '홍길동' }, true);
+    tru('정상 엔트리 통과', good && good.k === '방문' && good.id === 'ev1234567890ab');
+    check('at 없으면 버림', T.cleanLogEntry({ t: '12:00', k: '방문' }, true), null);
+    check('requireId 인데 id 없으면 버림', T.cleanLogEntry({ at: 1, t: '1', k: 'x' }, true), null);
+
+    var rows = T.mergeLogRows([
+      [{ id: 'evAAAAAAAAAAAAAA', at: 100, t: '12:00', k: '방문', s: 'A' }],
+      [{ id: 'evAAAAAAAAAAAAAA', at: 100, t: '12:00', k: '방문', s: 'A' },   // 같은 id → 한 줄
+       { id: 'evBBBBBBBBBBBBBB', at: 200, t: '12:01', k: '취소', s: 'B' }]
+    ], 10);
+    check('같은 id 중복 제거', rows.length, 2);
+    check('최신(at 큰) 먼저', rows[0].s, 'B');
+    check('limit 로 자름', T.mergeLogRows([[
+      { id: 'ev0000000000000a', at: 3, t: '1', k: 'x', s: '' },
+      { id: 'ev0000000000000b', at: 2, t: '1', k: 'x', s: '' },
+      { id: 'ev0000000000000c', at: 1, t: '1', k: 'x', s: '' }
+    ]], 2).length, 2);
+  })();
+
+  // logKeyId 는 결정적이어야 여러 폰의 같은 이벤트가 한 줄로 합쳐진다 — 해시가 바뀌면 이 값도 바뀜
+  group('logKeyId — 여러 폰 중복 방지용 결정적 id');
+  check('같은 입력 → 같은 id',
+    T.logKeyId('st:13:00|홍길동|2|1:arrived:14567') === T.logKeyId('st:13:00|홍길동|2|1:arrived:14567'), true);
+  check('다른 입력 → 다른 id',
+    T.logKeyId('st:13:00|홍길동|2|1:arrived:14567') !== T.logKeyId('st:13:00|홍길동|2|1:cancelled:14567'), true);
+  check('형식은 LOG_ID_PATTERN 통과 (ev + 14자)',
+    /^ev[a-z0-9]{14}$/.test(T.logKeyId('ac:13:00 홍길동')), true);
+  // 고정 스냅샷 — 해시가 바뀌면 여기서 빨간불 (배포된 앱과 옛날 앱이 같은 이벤트에 다른 id → 중복 로그)
+  check('결정적 id 스냅샷 (자동 취소)', T.logKeyId('ac:13:00 홍길동'), 'ev0gsxw210j9jwob');
+  check('결정적 id 스냅샷 (상태 변경)', T.logKeyId('st:13:00|홍길동|2|1:arrived:14567'), 'ev178qk651k9gz0v');
+
+  /* ==================== 룰렛 steps 수식 ==================== */
+  group('twistPick — 날벼락이 넘어갈 사람 (자기 자신 제외·균등)');
+  (function(){
+    var selfHit = 0, oob = 0, n, old, i, v;
+    for (n = 2; n <= 12; n++)
+      for (old = 0; old < n; old++)
+        for (i = 0; i < 200; i++){
+          v = T.twistPick(n, old);
+          if (v === old) selfHit++;
+          if (v < 0 || v >= n) oob++;
+        }
+    tru('자기 자신은 절대 안 나온다 (n 2~12 · 자리마다 200회)', selfHit === 0, selfHit + '회 자기자신');
+    tru('늘 0 이상 n 미만', oob === 0, oob + '회 범위밖');
+
+    var edge = 0;
+    for (n = 2; n <= 12; n++)
+      for (old = 0; old < n; old++)
+        [0, 0.9999999, 1].forEach(function(r){
+          var x = T.twistPick(n, old, r);
+          if (x === old || x < 0 || x >= n) edge++;
+        });
+    tru('rnd 끝값(0 · 1)에서도 안전', edge === 0, edge + '회 어긋남');
+
+    var N = 5, OLD = 2, cnt = [0,0,0,0,0], exp = 20000 / (N - 1), worst = 0;
+    for (i = 0; i < 20000; i++) cnt[T.twistPick(N, OLD)]++;
+    for (i = 0; i < N; i++){
+      if (i === OLD) continue;
+      worst = Math.max(worst, Math.abs(cnt[i] - exp) / exp);
+    }
+    tru('나머지 n-1 명이 고르게 나온다 (n=5 · 20000회)', cnt[OLD] === 0 && worst < 0.05,
+        '최대 편차 ' + (worst * 100).toFixed(1) + '%');
+  })();
+
+  group('rltSteps — 룰렛 이동 칸수 (모든 인원에서 일관)');
+  (function(){
+    var landFail = 0, overCap = 0, tooShort = 0, cap = T.consts.RLT_STEP_CAP;
+    for (var n = 2; n <= 40; n++){                          // 실사용은 2~5지만 전 범위 점검
+      for (var w = 0; w < n; w++){
+        for (var f = 0; f < n; f++){
+          var s = T.rltSteps(n, w, f);
+          if (((f + s) % n) !== w) landFail++;              // 반드시 당첨칸에 착지
+          if (s > cap && n <= cap) overCap++;               // n ≤ cap 이면 칸수도 cap 이하 (전 구간 곡선 감속)
+          if (s < 1) tooShort++;
+        }
+      }
+    }
+    tru('모든 (n 2~40, winner, from) 에서 당첨칸 착지', landFail === 0, landFail + ' fails');
+    tru('n ≤ ' + cap + ' 이면 칸수 ≤ ' + cap + ' (감속이 전 구간 곡선 지배)', overCap === 0, overCap + ' over');
+    tru('칸수 항상 1 이상', tooShort === 0, tooShort);
+    check('보통 인원(2~5): 3바퀴 이상 돈다', (function(){
+      for (var n = 2; n <= 5; n++) for (var w = 0; w < n; w++) for (var f = 0; f < n; f++)
+        if (T.rltSteps(n, w, f) / n < 3) return false;
+      return true;
+    })(), true);
+    check('큰 인원(예: 12명)도 최소 한 바퀴 근처는 돈다', (function(){
+      var min = 99;
+      for (var w = 0; w < 12; w++) for (var f = 0; f < 12; f++) min = Math.min(min, T.rltSteps(12, w, f));
+      return min >= 10;   // 12칸 중 10칸 = 거의 한 바퀴
+    })(), true);
+  })();
+
+  /* ==================== 오프라인 쓰기 큐 병합 ==================== */
+  group('wqEntry — 오프라인 쓰기 큐 병합');
+  (function(){
+    var D = '2026-08-31';
+    // 새 patch
+    check('patch (prev 없음)', T.wqEntry(null, D, 'x', 'patch', { patch: { status: 'arrived' }, ts: 100 }),
+      { date: D, id: 'x', op: 'patch', patch: { status: 'arrived' }, ts: 100 });
+    // patch + patch → 병합, ts 는 큰 쪽
+    check('patch 위에 patch → 필드 병합',
+      T.wqEntry({ date: D, id: 'x', op: 'patch', patch: { status: 'arrived' }, ts: 100 },
+                D, 'x', 'patch', { patch: { memo: '창가' }, ts: 90 }),
+      { date: D, id: 'x', op: 'patch', patch: { status: 'arrived', memo: '창가' }, ts: 100 });
+    // put 위에 patch → item 에 흡수
+    check('put 위에 patch → item 병합',
+      T.wqEntry({ date: D, id: 'x', op: 'put', item: { id: 'x', status: 'pending', ts: 50 }, ts: 50 },
+                D, 'x', 'patch', { patch: { status: 'cancelled' }, ts: 60 }),
+      { date: D, id: 'x', op: 'put', item: { id: 'x', status: 'cancelled', ts: 50 }, ts: 60 });
+    // del 은 이전 무엇이든 덮음
+    check('del 은 우선',
+      T.wqEntry({ date: D, id: 'x', op: 'patch', patch: { status: 'arrived' }, ts: 100 },
+                D, 'x', 'del', { ts: 200 }),
+      { date: D, id: 'x', op: 'del', ts: 200 });
+    // del 이 걸려 있으면 뒤따르는 patch 는 무시 (삭제 유지)
+    check('del 위에 patch → del 유지',
+      T.wqEntry({ date: D, id: 'x', op: 'del', ts: 200 },
+                D, 'x', 'patch', { patch: { status: 'pending' }, ts: 300 }),
+      { date: D, id: 'x', op: 'del', ts: 200 });
+    // 담기는 객체는 원본과 참조 공유 안 함
+    (function(){
+      var src = { id: 'x', status: 'pending', ts: 1 };
+      var e = T.wqEntry(null, D, 'x', 'put', { item: src, ts: 1 });
+      src.status = 'MUTATED';
+      check('put item 은 복사본 (원본 변경에 안 흔들림)', e.item.status, 'pending');
+    })();
+  })();
+
+  /* ==================== stalePurgeDates — 오래된 날짜 정리 (시계 오류 방어) ==================== */
+  group('stalePurgeDates — 가장 최근 날짜는 절대 안 지운다');
+  (function(){
+    var sp = T.stalePurgeDates;
+    var days = ['2026-08-29', '2026-08-30', '2026-08-31', '2026-09-01'];
+    check('limit=8-31 → 그보다 오래된 것만, 최근(9-01) 제외',
+      sp(days, '2026-08-31').sort(), ['2026-08-29', '2026-08-30']);
+    check('limit 이 미래(시계 3일 빠름) → 그래도 최근 날짜는 남는다',
+      sp(days, '2026-09-04'), ['2026-08-29', '2026-08-30', '2026-08-31']);
+    check('날짜 하나뿐 → 그게 최근이라 안 지움', sp(['2026-09-01'], '2026-09-04'), []);
+    check('날짜 형식 아닌 키(__logs__ 등)는 무시', sp(['__logs__', '2026-08-01', '2026-09-01'], '2026-08-15'), ['2026-08-01']);
+    check('futureLimit 주면 그보다 미래인 날짜도 지움(최근 제외)',
+      sp(['2026-09-01', '2026-09-05', '2026-09-09'], '2026-08-01', '2026-09-02').sort(), ['2026-09-05']);
+    check('빈 목록 → []', sp([], '2026-09-01'), []);
+  })();
+
+  /* ==================== kstParts — 서버 epoch → 한국시간 조각 ==================== */
+  group('kstParts — UTC epoch → KST(UTC+9) 벽시계 (기기 시간대 무관)');
+  (function(){
+    var kp = T.kstParts;
+    // 2026-09-01 04:30:00 UTC = 2026-09-01 13:30:00 KST
+    var a = kp(Date.UTC(2026, 8, 1, 4, 30, 0));
+    check('04:30 UTC → KST 13:30 / 2026-09-01', [a.y, a.mon, a.day, a.h, a.min], [2026, 8, 1, 13, 30]);
+    // 2026-09-01 20:00 UTC = 2026-09-02 05:00 KST (날짜 넘어감)
+    var b = kp(Date.UTC(2026, 8, 1, 20, 0, 0));
+    check('20:00 UTC → KST 다음날 05:00', [b.y, b.mon, b.day, b.h], [2026, 8, 2, 5]);
+    // 2026-12-31 15:00 UTC = 2027-01-01 00:00 KST (연말 넘어감)
+    var c = kp(Date.UTC(2026, 11, 31, 15, 0, 0));
+    check('연말: 12/31 15:00 UTC → KST 2027-01-01 00시', [c.y, c.mon, c.day, c.h], [2027, 0, 1, 0]);
+    // 초 단위도 보존
+    var e = kp(Date.UTC(2026, 8, 1, 4, 15, 42));
+    check('초 보존', [e.h, e.min, e.s], [13, 15, 42]);
+  })();
+
+  /* ==================== 자동취소 — 15분 창 ==================== */
+  group('autoCancelDue — 예약시각 +15분부터 +20분 전까지만');
+  (function(){
+    var d = T.autoCancelDue, S = 14 * 60;   // 14:00
+    var P = function(){ return { status: 'pending', time: '14:00' }; };
+    tru('정확히 +15분 → 취소', d(P(), S + 15) === true);
+    tru('+15분 30초 → 취소', d(P(), S + 15.5) === true);
+    tru('+17분 → 취소', d(P(), S + 17) === true);
+    tru('+19분 59초 (창 끝자락) → 취소', d(P(), S + 19 + 0.98) === true);
+    tru('+14분 30초 (아직) → 아님', d(P(), S + 14.5) === false);
+    tru('+20분 (창 지남) → 아님', d(P(), S + 20) === false);
+    tru('+25분 (뒤늦게) → 아님', d(P(), S + 25) === false);
+    tru('대기 아니면 → 아님', d({ status: 'arrived', time: '14:00' }, S + 15) === false);
+    tru('noAuto 붙었으면 → 아님', d({ status: 'pending', time: '14:00', noAuto: 1 }, S + 15) === false);
+  })();
+
+  group('lateEntry — 등록하는 순간 이미 창이 열려 있었나');
+  (function(){
+    var L = T.lateEntry, S = 14 * 60;   // 14:00 예약, 창은 14:15 부터
+    tru('14:10 에 등록 → 아직 (앱이 지켜본다)', L('14:00', S + 10) === false);
+    tru('14:14 에 등록 → 아직', L('14:00', S + 14) === false);
+    tru('14:15 에 등록 → 이미 지남 (사람 몫)', L('14:00', S + 15) === true);
+    tru('14:17 에 등록 → 사람 몫', L('14:00', S + 17) === true);
+    tru('14:40 에 등록 → 사람 몫', L('14:00', S + 40) === true);
+    tru('오전에 저녁 예약 등록 → 아직', L('19:00', 10 * 60) === false);
+  })();
+
+  group('stampTs — 누가 최신인가를 가리는 값');
+  (function(){
+    var st = T.stampTs, now = Date.now();
+    // 앞 값이 없으면 지금(서버 시계)
+    tru('새 항목은 지금 시각', Math.abs(st(null) - now) < 3000);
+    tru('ts 없는 항목도 지금 시각', Math.abs(st({}) - now) < 3000);
+    // 앞 값이 과거면 지금 시각 (뒤로 가지 않는다)
+    tru('앞 값이 과거 → 지금 시각', st({ ts: now - 60000 }) >= now - 3000);
+    // ★앞 값이 미래(옛 기기 시계로 찍힌 것)면 반드시 그보다 커야 한다.
+    //   작거나 같으면 itemMerge 가 «서버가 더 최신»으로 보고 내 수정을 버린다.
+    var future = now + 3600000;
+    tru('앞 값이 미래 → 그보다 큼', st({ ts: future }) > future);
+    tru('앞 값이 미래 → 딱 +1', st({ ts: future }) === future + 1);
+    // 같은 항목을 이어 고치면 늘 커진다
+    var it = { ts: now + 600000 };
+    var a = st(it); it.ts = a;
+    var b = st(it); it.ts = b;
+    var c = st(it);
+    tru('이어 고치면 계속 커진다', a < b && b < c);
+  })();
+
+  /* ==================== dev/prod 판정 ==================== */
+  group('computeDev — 실배포에서만 prod, 그 외 전부 dev');
+  (function(){
+    var cd = T.computeDev;
+    check('실배포 /reserve/ → prod',            cd('kimce45.github.io', '/reserve/'), false);
+    check('실배포 /reserve/index.html → prod',   cd('kimce45.github.io', '/reserve/index.html'), false);
+    check('실배포 슬래시 없음 /reserve → prod',  cd('kimce45.github.io', '/reserve'), false);
+    check('테스트 /reserve-dev/ → dev',          cd('kimce45.github.io', '/reserve-dev/'), true);
+    check('/reserve-something/ → dev',           cd('kimce45.github.io', '/reserve-x/'), true);
+    check('localhost → dev',                     cd('localhost', '/reserve/'), true);
+    check('localhost 복사본 경로 → dev',         cd('localhost', '/v152/index.html'), true);
+    check('file:// (host 없음) → dev',            cd('', '/Users/x/reserve/index.html'), true);
+    check('남의 fork → dev',                     cd('someone.github.io', '/reserve/'), true);
+    check('루트 / → dev',                        cd('kimce45.github.io', '/'), true);
+  })();
+
+  /* ==================== HTML 조각 sanity ==================== */
+  group('HTML 헬퍼 sanity');
+  // 2026-09-15: esc 가 따옴표까지 막도록 바뀌었다 — 속성값에 써도 빠져나갈 수 없게.
+  check('esc 는 < > & " \' 를 전부 변환', T.esc('<a href="&">'), '&lt;a href=&quot;&amp;&quot;&gt;');
+  check('esc 는 홑따옴표도 막는다', T.esc("it's"), 'it&#39;s');
+  tru('hourOptions 는 영업시간 범위', (function(){
+    var h = T.hourOptions();
+    return h.indexOf('value="' + T.pad(T.consts.HOUR_MIN) + '"') >= 0
+        && h.indexOf('value="' + T.pad(T.consts.HOUR_MAX) + '"') >= 0
+        && h.indexOf('value="' + T.pad(T.consts.HOUR_MIN - 1) + '"') < 0;
+  })());
+
+  /* ==================== sortItems — 명단 표시 순서 ====================
+     화면에 보이는 줄 순서를 정하는 비교 함수다(arr.sort(sortItems) 로 쓴다).
+     시간이 먼저, 같은 시간대 안에서는 붙여넣은 순서(seq)를 지킨다 — 직원이 종이 명단과
+     같은 순서로 읽을 수 있어야 하므로 상태(방문/취소)로는 자리를 바꾸지 않는다. */
+  group('sortItems — 명단 표시 순서');
+  (function(){
+    var mk = function(id, time, seq, status){ return { id: id, time: time, seq: seq, status: status || 'pending', name: id, pax: 2 }; };
+    var got = [mk('c','17:00',5), mk('a','12:00',2), mk('b','12:00',1), mk('d','09:30',9)]
+                .sort(T.sortItems).map(function(x){ return x.id; });
+    check('시간 오름차순 → 같은 시간대는 seq 순', got, ['d','b','a','c']);
+
+    // 상태가 순서를 바꾸면 안 된다 (방문 처리했다고 줄이 튀어오르면 읽던 자리를 잃는다)
+    var st = [mk('x','12:00',1,'cancelled'), mk('y','12:00',2,'arrived'), mk('z','12:00',3,'pending')]
+                .sort(T.sortItems).map(function(x){ return x.id; });
+    check('상태는 순서에 영향 없음', st, ['x','y','z']);
+
+    // 자정 넘김 표기(예: 00:30)도 문자열 비교로 맨 앞에 온다
+    var mid = [mk('late','23:00',1), mk('early','00:30',2)].sort(T.sortItems).map(function(x){ return x.id; });
+    check('00:30 은 23:00 보다 앞', mid, ['early','late']);
+  })();
+
+  /* ==================== dayTally — 하루 집계 문구 ==================== */
+  group('dayTally — 하루 집계');
+  (function(){
+    var items = [
+      { id:'1', time:'12:00', status:'arrived',   seq:0 },
+      { id:'2', time:'12:00', status:'cancelled', seq:1 },
+      { id:'3', time:'17:00', status:'pending',   seq:2 }
+    ];
+    var html = T.dayTally(items);
+    tru('방문 건수가 들어간다', html.indexOf('방문 1') >= 0, html);
+    tru('취소 건수가 들어간다', html.indexOf('취소 1') >= 0, html);
+    // 대기는 「남은 예약」쪽에서 따로 보여주므로 이 집계엔 안 넣는다
+    tru('대기는 이 집계에 없다', html.indexOf('대기') < 0, html);
+    // 아무도 안 왔어도 「방문 0」은 보여준다 — 빈칸이면 "아직 아무 일 없음"인지
+    // "집계가 안 된 건지" 구분이 안 된다. 반대로 취소가 없으면 취소 칸은 아예 뺀다.
+    var none = T.dayTally([{ id:'1', time:'12:00', status:'pending', seq:0 }]);
+    tru('아무도 안 왔으면 「방문 0」', none.indexOf('방문 0') >= 0, none);
+    tru('취소가 없으면 취소 칸은 없다', none.indexOf('취소') < 0, none);
+  })();
+
+  /* ==================== parseYmd — 날짜 문자열 → Date ==================== */
+  group('parseYmd — 날짜 문자열');
+  (function(){
+    var d = T.parseYmd('2026-09-05');
+    check('연·월·일이 그대로 (월은 0부터)', { y: d.getFullYear(), m: d.getMonth(), d: d.getDate() },
+          { y: 2026, m: 8, d: 5 });
+    // ymd 와 왕복이 맞아야 날짜 계산(dayGap·shiftDate)이 어긋나지 않는다
+    check('ymd 와 왕복', T.ymd(T.parseYmd('2026-01-31')), '2026-01-31');
+    check('윤년 2월 29일 왕복', T.ymd(T.parseYmd('2028-02-29')), '2028-02-29');
+  })();
+
+  /* ==================== logIdentity — 같은 사건은 같은 id ====================
+     여러 폰이 같은 체크를 해도 로그가 한 줄로 합쳐지도록, 사건 내용이 같으면 같은 id 가 나와야 한다. */
+  group('logIdentity — 같은 사건 = 같은 id');
+  (function(){
+    var a = T.logIdentity({ k: '방문', s: '12:00 하나' });
+    var b = T.logIdentity({ k: '방문', s: '12:00 하나' });
+    var c = T.logIdentity({ k: '취소', s: '12:00 하나' });
+    var d = T.logIdentity({ k: '방문', s: '12:00 두리' });
+    tru('같은 내용 → 같은 id', a === b, a + ' / ' + b);
+    tru('종류가 다르면 다른 id', a !== c, a + ' / ' + c);
+    tru('대상이 다르면 다른 id', a !== d, a + ' / ' + d);
+    tru('문자열을 돌려준다', typeof a === 'string' && a.length > 0, a);
+  })();
+
+  /* ==================== 기록 줄 합치기 ==================== */
+  group('dedupeLogRows — 같은 사람·같은 종류를 보여 줄 때 합침');
+  (function(){
+    var T0 = 1758400000000;   // 아무 시각
+    function r(at, k, s){ return { at: at, t: '10:00', k: k, s: s }; }
+    // 최신순으로 들어온다
+    var rows = [r(T0+90000,'방문','15:00 임동현'), r(T0+30000,'체크 해제','15:00 임동현'), r(T0,'방문','15:00 임동현')];
+    var d = T.dedupeLogRows(rows);
+    check('2분 안의 같은 줄은 최신만', d.length, 2);
+    check('남은 것은 최신 시각', d[0].at, T0+90000);
+    check('종류가 다르면 남는다', d[1].k, '체크 해제');
+
+    // 창 밖이면 둘 다 남는다 — 「18시에 왔다 21시에 다시 체크」 같은 이력을 잃지 않는다
+    var far = [r(T0+400000,'방문','15:00 임동현'), r(T0,'방문','15:00 임동현')];
+    check('2분 밖이면 각자 남는다', T.dedupeLogRows(far).length, 2);
+
+    // 사람이 다르면 안 합친다
+    var two = [r(T0+10000,'방문','15:00 임동현'), r(T0,'방문','15:00 최민식')];
+    check('대상이 다르면 안 합침', T.dedupeLogRows(two).length, 2);
+    tru('빈 입력', T.dedupeLogRows(null).length === 0);
+  })();
+
+  group('foldLogRows — 한 순간의 무더기를 한 줄로');
+  (function(){
+    function r(at, k, s){ return { at: at, t: '17:15', k: k, s: s }; }
+    var batch = [r(3,'자동 취소','17:00 정약용'), r(2,'자동 취소','17:00 강감찬'), r(1,'자동 취소','17:00 이순신')];
+    var f = T.foldLogRows(batch);
+    check('셋이 한 줄로', f.length, 1);
+    check('이름이 모두 담긴다', f[0].names.length, 3);
+    check('시간대도 같이', f[0].slot, '17:00');
+
+    // 셋 중 하나라도 다르면 안 접는다
+    check('시각이 다르면 따로', T.foldLogRows([{at:2,t:'17:15',k:'자동 취소',s:'17:00 가'},
+                                             {at:1,t:'17:16',k:'자동 취소',s:'17:00 나'}]).length, 2);
+    check('종류가 다르면 따로', T.foldLogRows([{at:2,t:'17:15',k:'자동 취소',s:'17:00 가'},
+                                             {at:1,t:'17:15',k:'취소',s:'17:00 나'}]).length, 2);
+    check('대상 시간대가 다르면 따로', T.foldLogRows([{at:2,t:'17:15',k:'자동 취소',s:'17:00 가'},
+                                                 {at:1,t:'17:15',k:'자동 취소',s:'18:00 나'}]).length, 2);
+    // 같은 이름이 같은 분에 두 번 찍혀도 「가 · 가」가 되지 않는다
+    var dup = T.foldLogRows([{at:2,t:'17:15',k:'자동 취소',s:'17:00 가'},
+                             {at:1,t:'17:15',k:'자동 취소',s:'17:00 가'}]);
+    check('같은 이름은 한 번만', dup[0].names.length, 1);
+  })();
+
+  /* ==================== 스타일시트 온전성 ==================== */
+  /* ★이 묶음은 «순수 함수»가 아니라 브라우저가 실제로 파싱한 CSS 를 본다.
+     2026-09-19 주석을 닫는 기호를 잘못 넣어 설명글이 규칙 자리로 샌 적이 있는데,
+     그때 이 셀프테스트는 144/144 로 통과했다 — 화면은 망가졌는데도. 그래서 넣는다.
+     (설명글에 «주석 닫는 기호» 자체를 적지 말 것. 이 주석도 그것 때문에 한 번 깨졌다.) */
+  // CSS 의 시간 토큰과 JS 가 기다리는 시간이 «한 군데»에서 나오는지.
+  // 예전엔 JS 에 210·130·620 을 베껴 적어 뒀다 — 토큰을 고치면 말없이 어긋났다(2026-09-21).
+  group('움직임 — CSS 시간과 JS 시간이 한 군데인가');
+  (function(){
+    var T = window.__ixTest || {};
+    var cs = getComputedStyle(document.documentElement);
+    function tok(n){
+      var t = (cs.getPropertyValue(n) || '').trim();
+      var v = parseFloat(t);
+      return t.slice(-2) === 'ms' ? v : v * 1000;
+    }
+    tru('MS 를 내보낸다', !!T.MS, T.MS);
+    if (!T.MS) return;
+    check('MS.move  = --tMove', T.MS.move, tok('--tMove'));
+    check('MS.press = --tPress', T.MS.press, tok('--tPress'));
+    check('MS.state = --tState', T.MS.state, tok('--tState'));
+    check('MS.hold  = --holdms (길게 눌러 초기화)', T.MS.hold, tok('--holdms'));
+    // 초 단위(.2s)를 ms 로 옳게 읽었나 — 0.2 로 읽으면 행이 즉시 지워진다
+    tru('초 단위를 ms 로 읽는다', T.MS.move > 50 && T.MS.move < 2000, T.MS.move);
+    tru('--tPress < --tState < --tMove', T.MS.press < T.MS.state && T.MS.state < T.MS.move,
+        T.MS.press + '/' + T.MS.state + '/' + T.MS.move);
+    // 기록 칸 바꾸기: 판 높이는 «딱», 움직이는 건 썸뿐 (오너 2026-09-21). 높이 애니메이션을 되살리면 잡는다.
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    var at = src.indexOf('function recSetBody');
+    var body = at < 0 ? '' : src.slice(at, src.indexOf('\n  }\n', at) + 4);
+    tru('기록 목록 갈기(recSetBody)를 찾았다', at >= 0, at);
+    tru('★기록 판 높이는 즉시 바뀐다 — animate·transition 없음', body && !/\.animate\s*\(|transition/.test(body));
+  })();
+
+  // 「만든 곳」 홈페이지 → 아이폰 홈 화면 앱에서 진짜 사파리로.
+  // ★예비 장치(«안 넘어가면 앱 안에서 window.open»)는 없어야 한다. 시뮬레이터 실측으로 어떤 시간으로도
+  //   맞게 못 만든다는 게 드러났다 — 0.7초면 넘어가기 전에 울려 앱 안에서도 열리고(오너 제보 버그),
+  //   2.5초면 iOS 가 팝업으로 막는다. 누가 다시 넣으면 여기서 잡는다. (2026-09-21)
+  group('만든 곳 — 홈페이지는 사파리로만');
+  (function(){
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    var at = src.indexOf("querySelector('#sheetBody .site')");
+    tru('홈페이지 클릭 처리를 찾았다', at >= 0, at);
+    if (at < 0) return;
+    var body = src.slice(at, at + 2600);
+    var end = body.indexOf("getElementById('installBtn')");
+    if (end > 0) body = body.slice(0, end);
+    tru('사파리로 넘긴다 (x-safari-)', body.indexOf("'x-safari-'") >= 0);
+    tru('아이폰 홈 화면 앱에서만 (navigator.standalone)', /navigator\.standalone\s*!==\s*true/.test(body));
+    tru('★앱 안에서 여는 예비 window.open 이 없다', !/window\.open\s*\(/.test(body));
+    tru('★예비 타이머가 없다', !/setTimeout\s*\(/.test(body));
+    // 계좌번호: 보여줄 땐 하이픈, 복사할 땐 숫자만 (오너 2026-09-21). 은행 앱 숫자 입력칸에 그대로 붙게.
+    // 후원(예금주·계좌)은 뺐다(오너 2026-10-15) — 흔적이 남아 있으면 안 된다.
+    // 주석에 «왜 뺐는지»는 남아 있어도 된다 — 쓰이는 값과 화면에 그리는 글자만 없으면 된다.
+    tru('후원 계좌가 남아 있지 않다', !/DONATE/.test(src) && !/계좌번호 복사|예금주<\/span>/.test(src));
+  })();
+
+  // 이름 검색 — 앱은 늘 「대기」로 열린다. 거기서 이미 방문·취소한 손님을 찾으면 개수는 「1건」인데 줄이 0 이었다(2026-09-21).
+  // 검색 중엔 「대기」 보기의 두 규칙(처리된 줄 숨김·체크하면 빠짐)을 멈춘다. 실측: 대기·전체가 같은 결과를 낸다.
+  group('이름 검색 — 「대기」에서도 다 보인다');
+  (function(){
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    tru('검색 중엔 상태로 거르지 않는다', /viewMode === 'pending' && !q\)\s*\?\s*g\.items\.filter/.test(src));
+    tru('검색 중엔 체크해도 빠지기를 안 건다', /!searching\(\) && it\.status !== 'pending'\) scheduleLeave/.test(src));
+    tru('기다리던 빠지기도 검색이 시작되면 멈춘다', /viewMode !== 'pending' \|\| searching\(\)\)\{ cancelLeave\(id\)/.test(src));
+    var at = src.indexOf('function openSearch(){');
+    tru('검색을 열면 대기 중인 빠지기를 거둔다', at >= 0 && src.slice(at, at + 200).indexOf('cancelAllLeaves()') >= 0);
+  })();
+
+  // 접기 — 보이는 것과 다른 기준으로 숨은 상태를 바꾸면, 눈엔 변화가 없는데 나중에 말없이 접혀 있다(2026-09-21 실측 셋).
+  //   A 검색 중 시간대 머리글  B 검색 중 「전체 접기」  C 「대기」에서 「전체 펼치기」가 두 번 눌러야 먹음
+  //   + 검색을 열자마자 0건이면 버튼이 켜진 채. 전부 tools/state-sweep.js 가 16가지 상태로 다시 잡는다.
+  group('접기 — 보이는 것과 같은 기준으로');
+  (function(){
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    var ts = src.indexOf('function toggleSlot(time){');
+    tru('A 검색 중엔 시간대 머리글이 아무것도 안 바꾼다', ts >= 0 && src.slice(ts, ts + 400).indexOf('if (searching()) return;') >= 0);
+    var fb = src.indexOf("foldBtn.addEventListener('click'");
+    var fbody = fb < 0 ? '' : src.slice(fb, fb + 1400);
+    tru('B 검색 중엔 「전체 접기」가 아무것도 안 바꾼다', fbody.indexOf('if (searching()) return;') >= 0);
+    tru('B 검색 중엔 접기 버튼이 꺼진다', /foldBtnEl\.disabled = noGroups \|\| !!q/.test(src));
+    tru('C 접을지 펼칠지는 «보이는» 시간대로 정한다', fbody.indexOf("document.querySelector('#list .group:not(.shut)')") >= 0);
+    var em = src.indexOf('if (!items.length){');
+    tru('목록이 비어 일찍 끝나도 접기 버튼을 맞춘다', em >= 0 && src.slice(em, em + 300).indexOf('paintFoldBtn(true, 0, q)') >= 0);
+  })();
+
+  // 룰렛 날벼락 확률은 «주소»로 정해진다 — 같은 파일을 어디 올려도 맞게(2026-09-21, 로컬 1.00 이 실사용에 올라간 뒤).
+  group('룰렛 — 날벼락 확률은 주소로');
+  (function(){
+    var C = T.twistChance, D = T.computeDev;
+    tru('판정 함수를 내보낸다', typeof C === 'function' && typeof D === 'function');
+    if (typeof C !== 'function' || typeof D !== 'function') return;
+    check('실사용 주소 → 0.25', C(D('kimce45.github.io', '/reserve/')), 0.25);
+    check('실사용 주소(끝 / 없음) → 0.25', C(D('kimce45.github.io', '/reserve')), 0.25);
+    check('테스트앱 주소 → 1', C(D('kimce45.github.io', '/reserve-dev/')), 1);
+    check('로컬 → 1', C(D('localhost', '/app/index.html')), 1);
+    check('파일로 연 것 → 1', C(D('', '/Users/x/index.html')), 1);
+  })();
+
+  // 취소 되돌리기 — 이미 취소된 줄의 ⋯「취소」 = 대기로. 기록엔 「취소 해제」(방문을 거치지 않는다). 2026-09-22.
+  group('취소 되돌리기');
+  (function(){
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    tru('취소된 줄에서 「취소」를 또 누르면 대기로', /status === 'cancelled' && it\.status === 'cancelled'\) status = 'pending'/.test(src));
+    tru('기록엔 「취소 해제」로 남는다', /it\.status === 'cancelled' \? '취소 해제'/.test(src));
+  })();
+
+  // 업데이트 띠 — ★「안 올린 날에도 뜨던」 진짜 원인은 깃허브가 커밋 하나에도 사이트를 통째로
+  // 다시 펴내며 모든 파일의 etag·last-modified 를 새로 찍는 것이었다(2026-09-28 실측).
+  // 그래서 표식 전체가 아니라 «끝의 파일 크기»만 본다.
+  group('업데이트 알림 — 파일 크기로 본다');
+  (function(){
+    var T2 = window.__ixTest || {};
+    tru('판정 함수를 내보낸다', typeof T2.tagChanged === 'function' && typeof T2.tagSize === 'function');
+    if (typeof T2.tagSize !== 'function') return;
+    check('깃허브 표식에서 크기를 읽는다', T2.tagSize('"6aba252b-73f4a"'), 474954);
+    check('★gzip 이면 W/ 가 붙는다 — 그래도 읽는다', T2.tagSize('W/"6aba252b-73f4a"'), 474954);
+    check('모르는 모양이면 null', T2.tagSize('"abcdef"'), null);
+    check('빈 표식이면 null', T2.tagSize(''), null);
+    function E(h, size){ return { size: T2.tagSize('"' + h + '-' + size + '"'), etag: '', lm: '' }; }
+    var mine = E('6aba252b', '73f4a');
+    check('★다시 펴내기만 함(시각만 바뀜) → 안 알린다', T2.tagChanged(mine, E('6abb9999', '73f4a')), false);
+    check('크기가 커짐 → 알린다', T2.tagChanged(mine, E('6abb9999', '73f5a')), true);
+    check('크기가 작아짐 → 알린다', T2.tagChanged(mine, E('6abb9999', '73f0a')), true);
+    check('시각까지 그대로 → 안 알린다', T2.tagChanged(mine, E('6aba252b', '73f4a')), false);
+    check('크기를 못 읽으면 안 알린다', T2.tagChanged(mine, { size: null, etag: '', lm: '' }), false);
+    check('한쪽이 없으면 안 알린다', T2.tagChanged(mine, null), false);
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    // ★기다렸다 알리면 「안 뜬다」가 된다 — 실측 21초(오너 2026-09-28). 덧댄 두 번 물어보기는 걷어냈다.
+    tru('알림을 미루지 않는다', src.indexOf('UPD_CONFIRM_MS') < 0 && src.indexOf('updateConfirmed') < 0);
+    // last-modified·etag 앞자리는 «펴낸 시각»이라 판단 근거로 쓰면 안 된다.
+    var at = src.indexOf('function tagChanged(');
+    var body = at < 0 ? '' : src.slice(at, at + 300);
+    tru('시각으로 판단하지 않는다', body && !/lm|Date\.parse|tagTime/.test(body));
+  })();
+
+  // 단톡방 글 통째 붙여넣기 (오너 2026-09-28). 실제로 올라온 글 모양으로 검사한다.
+  group('붙여넣기 — 단톡방 글 통째로');
+  (function(){
+    var msg = '9월 10일 목요일\n\n내국인 1팀 / 외국인 23팀\n네이버 4팀 / 캐치테이블 20팀\n\n'
+            + '12:00 Nicole 2명 N 방문\n\n14:00 Meryl Koh 4명 방문\n14:00 Lilian Ngay 2명 취소\n'
+            + '19:00 심예린 2명 N 방문\n19:00 Dorin Klein Luzon 6명 방문';
+    var r = T.parse(msg);
+    check('예약만 골라낸다 (N 붙은 2줄은 아직 오류)', r.length, 3);
+    check('★머리글 3줄은 경고 없이 버린다', r.bad.length, 2);
+    check('★남은 경고는 N 붙은 줄뿐 — 머리글은 없다',
+          r.bad.every(function(b){ return b.text.indexOf(' N ') >= 0; }), true);
+    check('공백 든 이름', r[2] && r[2].name, 'Dorin Klein Luzon');
+    check('방문을 읽는다', r[0] && r[0].status, 'arrived');
+    check('취소를 읽는다', r[1] && r[1].status, 'cancelled');
+    tru('머리글은 예약처럼 안 보인다', !T.looksLikeItem('내국인 1팀 / 외국인 23팀') && !T.looksLikeItem('9월 10일 목요일'));
+    tru('시각이 있으면 예약처럼 본다', T.looksLikeItem('15:00 홍길동'));
+  })();
+
+  // 로그아웃 제거(오너 2026-10-15) — 가게 공용 폰이라 쓸 일이 없고, 끊긴 채 누르면 스스로를 가둔다.
+  group('서랍 — 로그아웃 없음');
+  (function(){
+    tru('서랍에 로그아웃 버튼이 없다', !document.getElementById('logoutBtn'));
+    var labels = [].map.call(document.querySelectorAll('.dwitem'), function(b){ return b.textContent.trim(); });
+    tru('남은 항목에 「로그아웃」이 없다', labels.indexOf('로그아웃') < 0, labels.join(' · '));
+    tru('명단 초기화는 그대로 있다', !!document.getElementById('resetBtn'));
+  })();
+
+  // 문의하기(오너 2026-10-15) — 가게 공용 폰은 메일 앱이 없을 수 있어 «주소를 보여주고 복사»까지 된다.
+  group('문의하기');
+  (function(){
+    tru('서랍에 문의하기가 있다', !!document.getElementById('askBtn'));
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    var at = src.indexOf("document.getElementById('askBtn')");
+    var body = at < 0 ? '' : src.slice(at, at + 1400);
+    var m = /var ASK = '([^']+)'/.exec(src);
+    tru('받는 주소가 메일 모양', !!m && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m[1]), m ? m[1] : '없음');
+    tru('mailto 로 바로 쓸 수 있다', /mailto:' \+ ASK/.test(body));
+    tru('메일 제목에 버전이 들어간다', /subject=.*VERSION/.test(body));
+    tru('주소를 복사할 수 있다', /copyText\(ASK/.test(body));
+    // 오류 기록은 없앴다(오너 2026-10-15) — 시트엔 메일 주소 한 줄뿐이어야 한다.
+    tru('시트에 메일 말고 다른 건 없다', !/errHtml|문제 기록/.test(body));
+    tru('오류 기록 장치가 통째로 없다', !/errLog|errList|ERR_KEY|ix-err/.test(src));
+    // ★버전을 두 군데 적으면 한쪽만 고쳐져 어긋난다 — 「익순이란?」과 메일 제목이 한 값을 쓴다.
+    tru('버전을 글자로 두 번 적지 않는다', !/익순이 v[0-9]/.test(src));
+    tru('버전 값이 하나 있다', /var VERSION = 'v[0-9][^']*'/.test(src));
+  })();
+
+  // 테스트앱과 실사용은 홈 화면에서 «이름»으로도 갈려야 한다 — 아이콘 색만으로는 나란히 놓고 봐야 안다.
+  // ★실사용/테스트를 가르는 기준은 «한 자리»(IX_PROD)에 있어야 한다. 두 군데 적혀 있다가
+  //   한쪽만 고치면 실사용 앱이 스스로를 테스트로 보고 빈 명단을 보여준다.
+  group('실사용 판정 — 기준은 한 자리');
+  (function(){
+    var P = window.IX_PROD, F = window.IX_IS_PROD;
+    tru('기준이 한 자리에 있다', !!P && typeof F === 'function');
+    if (!P || typeof F !== 'function') return;
+    tru('실사용 도메인 목록이 있다', Array.isArray(P.hosts) && P.hosts.length >= 1, P.hosts.join(' · '));
+    check('실사용 주소 → 맞다', F(P.hosts[0], '/reserve/'), true);
+    check('같은 도메인 다른 경로 → 아니다', F(P.hosts[0], '/reserve-dev/'), false);
+    check('모르는 도메인 → 아니다', F('somebody.github.io', '/reserve/'), false);
+    check('로컬 파일 → 아니다', F('', '/Users/x/index.html'), false);
+    // 주소를 옮기는 동안 «두 주소»를 함께 인정할 수 있어야 한다.
+    var keep = P.hosts.slice();
+    P.hosts = keep.concat(['new-owner.github.io']);
+    check('이사 중 옛 주소 → 맞다', F(keep[0], '/reserve/'), true);
+    check('이사 중 새 주소 → 맞다', F('new-owner.github.io', '/reserve/'), true);
+    P.hosts = keep;
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    tru('판정이 두 군데 적혀 있지 않다', (src.match(/github\.io' && \//g) || []).length === 0);
+    // (모듈 스크립트 쪽은 미리보기가 가짜 파이어베이스로 갈아 끼우므로 여기서 못 본다 —
+    //  그쪽은 tools/check-js.sh 와 실제 배포본 확인이 맡는다.)
+    tru('앱 본체도 같은 기준을 쓴다', /computeDev\(host, path\)\{ return !IX_IS_PROD\(/.test(src));
+  })();
+
+  group('테스트앱 — 홈 화면 이름');
+  (function(){
+    var src = [].map.call(document.querySelectorAll('script:not([src])'), function(x){ return x.textContent; }).join('\n');
+    tru('아이폰용 이름 메타가 문서에 있다', !!document.querySelector('meta[name="apple-mobile-web-app-title"]'));
+    tru('테스트일 때 이름을 바꾼다', /if \(IS_DEV\)[\s\S]{0,260}apple-mobile-web-app-title/.test(src));
+    tru('바꾸는 이름이 실사용과 다르다', /DEV_NAME = '익순이 test'/.test(src));
+    tru('잠금화면 이름도 바꾼다', !!document.querySelector('.lockname') && /\.lockname[\s\S]{0,80}textContent = DEV_NAME/.test(src));
+  })();
+
+  group('스타일시트 — 주석·규칙 온전성');
+  (function(){
+    var sheets = [].slice.call(document.styleSheets), rules = [], kf = {};
+    sheets.forEach(function(sh){
+      var rs; try { rs = sh.cssRules; } catch(e){ return; }   // 남의 도메인 시트는 못 읽는다
+      for (var i = 0; i < rs.length; i++){
+        rules.push(rs[i]);
+        if (rs[i].type === 7) kf[rs[i].name] = true;          // 7 = CSSKeyframesRule
+      }
+    });
+    tru('규칙이 실제로 파싱됐다', rules.length > 200, rules.length + '개');
+    // 주석이 새면 한글 설명글이 «선택자»가 된다. 선택자에 한글이 있을 일은 없다.
+    var leaked = rules.filter(function(r){
+      return r.selectorText && /[\uAC00-\uD7A3]/.test(r.selectorText);
+    }).map(function(r){ return r.selectorText.slice(0, 40); });
+    tru('주석이 규칙 자리로 안 샜다', leaked.length === 0, leaked.join(' | ') || '없음');
+    // 애니메이션은 이름이 사라져도 조용히 «안 움직일» 뿐이라 눈으로만 찾기 어렵다 — 이름을 직접 센다.
+    ['nmFlick', 'boltLose', 'boltDeflate', 'pillIn'].forEach(function(n){
+      tru('@keyframes ' + n, kf[n] === true);
+    });
+  })();
+
+  /* ==================== 렌더 ==================== */
+  render();
+
+  function render(){
+    var pass = 0, fail = 0;
+    groups.forEach(function(g){ g.rows.forEach(function(r){ r.ok ? pass++ : fail++; }); });
+
+    var css = ''
+      + 'body{margin:0;background:#0f1319;color:#f0f3f6;'
+      + 'font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",system-ui,sans-serif;'
+      + '-webkit-font-smoothing:antialiased;padding:0 0 40px}'
+      + '.bar{position:sticky;top:0;background:#0f1319;border-bottom:1px solid #252c36;padding:16px 18px;z-index:1}'
+      + '.bar b{font-size:19px;font-weight:800}'
+      + '.tot{margin-left:10px;font-weight:800}'
+      + '.ok{color:#5fb08a}.no{color:#c9736a}'
+      + '.grp{padding:14px 18px 4px;font-size:12px;font-weight:800;letter-spacing:.04em;color:#8792a0}'
+      + '.row{display:flex;gap:10px;padding:7px 18px;border-top:1px solid #1c222b;align-items:baseline}'
+      + '.mk{flex:0 0 auto;font-weight:800}'
+      + '.nm{flex:1;min-width:0}'
+      + '.dt{display:block;margin-top:3px;font-size:12px;color:#8792a0;white-space:pre-wrap;word-break:break-all}'
+      + '.dt .g{color:#7fc9a5}.dt .w{color:#d2938c}';
+
+    var html = '<style>' + css + '</style>'
+      + '<div class="bar"><b>익순이 셀프테스트</b>'
+      + '<span class="tot ' + (fail ? 'no' : 'ok') + '">' + pass + ' / ' + (pass + fail)
+      + (fail ? '  (' + fail + ' 실패)' : '  전부 통과') + '</span></div>';
+
+    groups.forEach(function(g){
+      html += '<div class="grp">' + esc(g.name) + '</div>';
+      g.rows.forEach(function(r){
+        html += '<div class="row"><span class="mk ' + (r.ok ? 'ok' : 'no') + '">'
+          + (r.ok ? '✓' : '✕') + '</span><span class="nm">' + esc(r.name);
+        if (!r.ok){
+          html += '<span class="dt"><span class="w">got </span>' + esc(J(r.got))
+            + '\n<span class="g">want</span> ' + esc(J(r.want)) + '</span>';
+        }
+        html += '</span></div>';
+      });
+    });
+
+    document.body.innerHTML = html;
+    document.title = (fail ? '✕ ' : '✓ ') + pass + '/' + (pass + fail) + ' — 셀프테스트';
+  }
+
+  function esc(s){ return String(s).replace(/[<>&]/g, function(c){ return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); }
+})();
